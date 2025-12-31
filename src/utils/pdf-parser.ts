@@ -4,10 +4,13 @@
  */
 
 import * as pdfjsLib from 'pdfjs-dist';
+// @ts-ignore
+import pdfWorker from 'pdfjs-dist/build/pdf.worker?url';
+import mammoth from 'mammoth';
 
-// Set worker source to match the API version exactly
+// Set worker source to the local file to match the API version exactly
 if (typeof window !== 'undefined') {
-  pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+  pdfjsLib.GlobalWorkerOptions.workerSrc = pdfWorker;
 }
 
 /**
@@ -58,9 +61,9 @@ export async function extractTextFromPDF(file: File): Promise<string> {
  */
 export async function extractTextFromDOCX(file: File): Promise<string> {
   try {
-    const mammoth = await import('mammoth');
     const arrayBuffer = await file.arrayBuffer();
     
+    // Direct usage of top-level import to prevent bundler errors
     const result = await mammoth.extractRawText({ arrayBuffer });
     
     if (result.messages && result.messages.length > 0) {

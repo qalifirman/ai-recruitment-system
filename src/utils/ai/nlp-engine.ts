@@ -157,25 +157,6 @@ export function extractSkills(text: string): string[] {
 }
 
 /**
- * Calculate Term Frequency (TF)
- */
-function calculateTF(words: string[]): Map<string, number> {
-  const tf = new Map<string, number>();
-  const totalWords = words.length;
-  
-  for (const word of words) {
-    tf.set(word, (tf.get(word) || 0) + 1);
-  }
-  
-  // Normalize by total word count
-  for (const [word, count] of tf.entries()) {
-    tf.set(word, count / totalWords);
-  }
-  
-  return tf;
-}
-
-/**
  * NEW: Calculate Asymmetric Keyword Coverage
  * Instead of checking if documents are "similar" (Cosine),
  * this checks "How many of the Job's important words are in the Resume?"
@@ -197,16 +178,17 @@ function calculateCoverageScore(resumeWords: string[], jobWords: string[]): numb
   });
 
   // 3. Calculate Percentage
-  // We use Math.min to cap it at 100%, though logic implies it won't exceed.
-  // We add a small buffer for resume length to avoid punishing very short descriptions.
   return matchCount / jobUniqueWords.size;
 }
 
 /**
  * Calculate skill match percentage
+ * FIXED: Returns 0 if no skills required, instead of 1.
  */
 function calculateSkillMatch(resumeSkills: string[], requiredSkills: string[]): number {
-  if (requiredSkills.length === 0) return 1; // If no skills required, perfect match
+  // FIX: If no requirements, we cannot assume 100% match.
+  // We assume 0% match and let the Text Similarity score handle the rest.
+  if (!requiredSkills || requiredSkills.length === 0) return 0;
   
   const normalizedResumeSkills = resumeSkills.map(s => s.toLowerCase());
   const normalizedRequiredSkills = requiredSkills.map(s => s.toLowerCase());
@@ -232,7 +214,7 @@ function calculateExperienceScore(resumeYears: number, requiredYears: number): n
   if (resumeYears >= requiredYears) {
     return 1; // Perfect match
   } else if (resumeYears >= requiredYears * 0.5) {
-    return 0.8; // Relaxed: 50% of required years gives good score (e.g. 3yr vs 5yr)
+    return 0.8; // Relaxed
   } else if (resumeYears >= 1) {
     return 0.5; // Has some experience
   } else {
@@ -266,44 +248,64 @@ export function calculateMatch(
   const resumeWords = preprocessText(resumeText);
   const jobWords = preprocessText(jobDescription);
   
-  // --- NEW MATCHING LOGIC ---
+  // --- FIXED: If requiredSkills is empty, try to auto-extract from Job Description ---
+  // This prevents "Doctor" jobs (with no tags) from matching 100% with IT resumes.
+  let effectiveRequiredSkills = requiredSkills || [];
+  if (effectiveRequiredSkills.length === 0) {
+    effectiveRequiredSkills = extractSkills(jobDescription);
+  }
   
   // 1. Text Coverage (Content Match)
-  // Replaced Cosine/Jaccard with Asymmetric Coverage
-  // Logic: "Does resume cover the keywords in job description?"
   const coverageScore = calculateCoverageScore(resumeWords, jobWords);
   
-  // 2. Skill Match
-  const skillMatch = calculateSkillMatch(resumeSkills, requiredSkills);
+  // 2. Skill Match (Using the extracted skills if needed)
+  const skillMatch = calculateSkillMatch(resumeSkills, effectiveRequiredSkills);
   
   // 3. Experience Score
-  const experienceScore = calculateExperienceScore(resumeYearsExp, requiredYearsExp);
+  let experienceScore = calculateExperienceScore(resumeYearsExp, requiredYearsExp);
   
-  // 4. Weighted Final Score
-  // NEW WEIGHTS: Skills are king. Content is secondary. Experience is minor.
-  // Skills: 50%
-  // Content: 30%
-  // Experience: 20%
-  const matchScore = (coverageScore * 0.30) + (skillMatch * 0.50) + (experienceScore * 0.20);
+  // Find matched and missing skills
+  const normalizedResumeSkills = resumeSkills.map(s => s.toLowerCase());
+  
+  const matchedSkills = effectiveRequiredSkills.filter(skill =>
+    normalizedResumeSkills.includes(skill.toLowerCase())
+  );
+  
+  const missingSkills = effectiveRequiredSkills.filter(skill =>
+    !normalizedResumeSkills.includes(skill.toLowerCase())
+  );
   
   // Find matched keywords for display
   const resumeSet = new Set(resumeWords);
   const jobSet = new Set(jobWords);
   const matchedKeywords = [...jobSet].filter(word => resumeSet.has(word));
 
-  // Find matched and missing skills
-  const normalizedResumeSkills = resumeSkills.map(s => s.toLowerCase());
+  // === Logic Kill Switch (Stricter) ===
   
-  const matchedSkills = requiredSkills.filter(skill =>
-    normalizedResumeSkills.includes(skill.toLowerCase())
-  );
+  let penaltyApplied = false;
+  // If skills were found/required, but candidate matches very few
+  const skillThreshold = 0.20; 
   
-  const missingSkills = requiredSkills.filter(skill =>
-    !normalizedResumeSkills.includes(skill.toLowerCase())
-  );
+  // If we have requirements (either tagged or extracted), and match is low...
+  if (effectiveRequiredSkills.length > 0 && skillMatch < skillThreshold) {
+    penaltyApplied = true;
+    
+    // 1. Remove Experience Score completely (Years of coding don't count for unrelated job)
+    experienceScore = 0; 
+  }
+  
+  // 4. Weighted Final Score
+  // Skills: 50%, Content: 30%, Experience: 20%
+  let matchScore = (coverageScore * 0.30) + (skillMatch * 0.50) + (experienceScore * 0.20);
+  
+  // Apply final Crush if penalty was triggered
+  if (penaltyApplied) {
+    // Cap the score at 20% max, prevents recommendation
+    matchScore = Math.min(matchScore, 0.20);
+  }
   
   // Generate explanation
-  const explanation = generateExplanation(
+  let explanation = generateExplanation(
     matchScore,
     skillMatch,
     matchedSkills,
@@ -313,14 +315,18 @@ export function calculateMatch(
     requiredYearsExp
   );
   
+  if (penaltyApplied) {
+    explanation = `Low skill match (${Math.round(skillMatch*100)}%). Experience ignored due to skill mismatch. ` + explanation;
+  }
+  
   return {
     matchScore: Math.round(matchScore * 100) / 100,
-    textSimilarity: Math.round(coverageScore * 100) / 100, // Now represents "Coverage"
+    textSimilarity: Math.round(coverageScore * 100) / 100,
     skillMatch: Math.round(skillMatch * 100) / 100,
     experienceScore: Math.round(experienceScore * 100) / 100,
     matchedSkills,
     missingSkills,
-    matchedKeywords: matchedKeywords.slice(0, 10), // Top 10 keywords
+    matchedKeywords: matchedKeywords.slice(0, 10),
     explanation
   };
 }
@@ -343,7 +349,7 @@ function generateExplanation(
   
   // Skill analysis
   if (skillMatch >= 0.8) {
-    explanation += `Strong skill match (${Math.round(skillMatch * 100)}%) with ${matchedSkills.length} of ${matchedSkills.length + missingSkills.length} required skills. `;
+    explanation += `Strong skill match (${Math.round(skillMatch * 100)}%). `;
   } else if (skillMatch >= 0.5) {
     explanation += `Good skill match (${Math.round(skillMatch * 100)}%). `;
   } else {
@@ -353,10 +359,10 @@ function generateExplanation(
   // Experience analysis
   if (experienceScore >= 0.8) {
     explanation += `Experience requirement met.`;
-  } else if (experienceScore >= 0.5) {
-    explanation += `Close to experience requirement.`;
+  } else if (experienceScore > 0) {
+    explanation += `Experience considered.`;
   } else {
-    explanation += `Below experience requirement.`;
+    explanation += `Experience mismatch or ignored.`;
   }
   
   return explanation;

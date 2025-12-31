@@ -15,36 +15,15 @@ interface Application {
 }
 
 const STATUS_CONFIG = {
-  applied: {
-    label: 'Applied',
-    icon: Clock,
-    color: 'blue',
-    progress: 25
-  },
-  under_review: {
-    label: 'Under Review',
-    icon: AlertCircle,
-    color: 'yellow',
-    progress: 50
-  },
-  shortlisted: {
-    label: 'Shortlisted',
-    icon: CheckCircle,
-    color: 'green',
-    progress: 75
-  },
-  rejected: {
-    label: 'Rejected',
-    icon: XCircle,
-    color: 'red',
-    progress: 100
-  }
+  applied: { label: 'Applied', icon: Clock, color: 'blue', progress: 25 },
+  under_review: { label: 'Under Review', icon: AlertCircle, color: 'yellow', progress: 50 },
+  shortlisted: { label: 'Shortlisted', icon: CheckCircle, color: 'green', progress: 75 },
+  rejected: { label: 'Rejected', icon: XCircle, color: 'red', progress: 100 }
 };
 
 export function ApplicationTracking() {
   const { accessToken } = useAuth();
   const [applications, setApplications] = useState<Application[]>([]);
-  const [jobs, setJobs] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
 
   const serverUrl = serverFunctionUrl;
@@ -55,31 +34,15 @@ export function ApplicationTracking() {
 
   const fetchData = async () => {
     try {
-      const [appsRes, jobsRes] = await Promise.all([
-        fetch(`${serverUrl}/applications`, {
-          headers: { 'Authorization': `Bearer ${accessToken}` }
-        }),
-        fetch(`${serverUrl}/jobs`, {
-          headers: { 'Authorization': `Bearer ${accessToken}` }
-        })
-      ]);
-
-      const appsData = appsRes.ok ? await appsRes.json() : { applications: [] };
-      const jobsData = jobsRes.ok ? await jobsRes.json() : { jobs: [] };
-
-      setJobs(jobsData.jobs || []);
-
-      // Enrich applications with job details
-      const enriched = (appsData.applications || []).map((app: Application) => {
-        const job = (jobsData.jobs || []).find((j: any) => j.id === app.jobId);
-        return {
-          ...app,
-          jobTitle: job?.title || 'Unknown Job',
-          jobLocation: job?.location || 'Unknown Location'
-        };
+      // Only fetch applications; backend joins the Job details automatically
+      const appsRes = await fetch(`${serverUrl}/applications`, {
+        headers: { 'Authorization': `Bearer ${accessToken}` }
       });
 
-      setApplications(enriched);
+      const appsData = appsRes.ok ? await appsRes.json() : { applications: [] };
+
+      // Backend now sends jobTitle and jobLocation joined, no need for manual lookup that overwrites it
+      setApplications(appsData.applications || []);
     } catch (error) {
       console.error('Error fetching applications:', error);
     } finally {
@@ -105,41 +68,30 @@ export function ApplicationTracking() {
         </div>
       ) : (
         <>
-          {/* Summary Stats */}
           <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
             <div className="bg-white rounded-xl border border-gray-200 p-4">
-              <div className="text-2xl text-gray-900 mb-1">
-                {applications.length}
-              </div>
+              <div className="text-2xl text-gray-900 mb-1">{applications.length}</div>
               <div className="text-sm text-gray-600">Total Applications</div>
             </div>
             <div className="bg-white rounded-xl border border-gray-200 p-4">
-              <div className="text-2xl text-blue-600 mb-1">
-                {applications.filter(a => a.status === 'applied').length}
-              </div>
+              <div className="text-2xl text-blue-600 mb-1">{applications.filter(a => a.status === 'applied').length}</div>
               <div className="text-sm text-gray-600">Pending</div>
             </div>
             <div className="bg-white rounded-xl border border-gray-200 p-4">
-              <div className="text-2xl text-yellow-600 mb-1">
-                {applications.filter(a => a.status === 'under_review').length}
-              </div>
+              <div className="text-2xl text-yellow-600 mb-1">{applications.filter(a => a.status === 'under_review').length}</div>
               <div className="text-sm text-gray-600">Under Review</div>
             </div>
             <div className="bg-white rounded-xl border border-gray-200 p-4">
-              <div className="text-2xl text-green-600 mb-1">
-                {applications.filter(a => a.status === 'shortlisted').length}
-              </div>
+              <div className="text-2xl text-green-600 mb-1">{applications.filter(a => a.status === 'shortlisted').length}</div>
               <div className="text-sm text-gray-600">Shortlisted</div>
             </div>
           </div>
 
-          {/* Applications List */}
           <div className="grid gap-4">
             {applications.map(app => {
               const statusConfig = STATUS_CONFIG[app.status];
               const Icon = statusConfig.icon;
               
-              // Define status styles
               const statusStyles = {
                 applied: 'bg-blue-50 text-blue-600',
                 under_review: 'bg-yellow-50 text-yellow-600',
@@ -158,8 +110,8 @@ export function ApplicationTracking() {
                 <div key={app.id} className="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
                   <div className="flex items-start justify-between mb-4">
                     <div className="flex-1">
-                      <h3 className="text-lg text-gray-900 mb-1">{app.jobTitle}</h3>
-                      <p className="text-sm text-gray-600 mb-3">{app.jobLocation}</p>
+                      <h3 className="text-lg text-gray-900 mb-1">{app.jobTitle || 'Job Title Unavailable'}</h3>
+                      <p className="text-sm text-gray-600 mb-3">{app.jobLocation || 'Location Unavailable'}</p>
                       
                       <div className="flex items-center gap-4 text-sm">
                         <span className="text-gray-600">
@@ -173,13 +125,10 @@ export function ApplicationTracking() {
 
                     <div className={`flex items-center gap-2 px-4 py-2 rounded-full ${statusStyles[app.status]}`}>
                       <Icon className="w-5 h-5" />
-                      <span className="text-sm">
-                        {statusConfig.label}
-                      </span>
+                      <span className="text-sm">{statusConfig.label}</span>
                     </div>
                   </div>
 
-                  {/* Progress Bar */}
                   <div className="mb-4">
                     <div className="flex items-center justify-between text-sm text-gray-600 mb-2">
                       <span>Application Progress</span>
@@ -193,25 +142,6 @@ export function ApplicationTracking() {
                     </div>
                   </div>
 
-                  {/* Timeline */}
-                  <div className="flex items-center justify-between text-xs text-gray-500 pt-4 border-t border-gray-200">
-                    <div className={`flex items-center gap-1 ${app.status === 'applied' || app.status === 'under_review' || app.status === 'shortlisted' ? 'text-blue-600' : ''}`}>
-                      <div className={`w-2 h-2 rounded-full ${app.status === 'applied' || app.status === 'under_review' || app.status === 'shortlisted' ? 'bg-blue-600' : 'bg-gray-300'}`} />
-                      Applied
-                    </div>
-                    <div className={`w-12 h-px ${app.status === 'under_review' || app.status === 'shortlisted' ? 'bg-blue-600' : 'bg-gray-300'}`} />
-                    <div className={`flex items-center gap-1 ${app.status === 'under_review' || app.status === 'shortlisted' ? 'text-blue-600' : ''}`}>
-                      <div className={`w-2 h-2 rounded-full ${app.status === 'under_review' || app.status === 'shortlisted' ? 'bg-blue-600' : 'bg-gray-300'}`} />
-                      Review
-                    </div>
-                    <div className={`w-12 h-px ${app.status === 'shortlisted' ? 'bg-blue-600' : 'bg-gray-300'}`} />
-                    <div className={`flex items-center gap-1 ${app.status === 'shortlisted' ? 'text-green-600' : app.status === 'rejected' ? 'text-red-600' : ''}`}>
-                      <div className={`w-2 h-2 rounded-full ${app.status === 'shortlisted' ? 'bg-green-600' : app.status === 'rejected' ? 'bg-red-600' : 'bg-gray-300'}`} />
-                      {app.status === 'rejected' ? 'Rejected' : 'Shortlisted'}
-                    </div>
-                  </div>
-
-                  {/* Matched Skills */}
                   {app.matchedSkills && app.matchedSkills.length > 0 && (
                     <div className="mt-4 pt-4 border-t border-gray-200">
                       <div className="text-sm text-gray-600 mb-2">Matched Skills:</div>

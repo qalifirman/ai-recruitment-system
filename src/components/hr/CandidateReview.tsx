@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useAuth } from '../../contexts/AuthContext';
-import { serverFunctionUrl, publicAnonKey } from '../../utils/supabase/info';
+import { serverFunctionUrl } from '../../utils/supabase/info';
 import { Search, ExternalLink, Filter, ArrowUpDown } from 'lucide-react';
 
 interface Application {
@@ -8,8 +8,6 @@ interface Application {
   jobId: string;
   applicantId: string;
   resumeText: string;
-  resumePath: string;
-  resumeUrl?: string;
   skills: string[];
   yearsOfExperience: number;
   matchScore: number;
@@ -64,17 +62,8 @@ export function CandidateReview() {
 
       if (appsRes.ok) {
         const appsData = await appsRes.json();
-        
-        // Enrich applications with job titles
-        const enrichedApps = (appsData.applications || []).map((app: Application) => {
-          const job = (jobsData.jobs || []).find((j: Job) => j.id === app.jobId);
-          return {
-            ...app,
-            jobTitle: job?.title || 'Unknown Job'
-          };
-        });
-        
-        setApplications(enrichedApps);
+        // Backend provides jobTitle; don't overwrite it with local lookup
+        setApplications(appsData.applications || []);
       }
     } catch (error) {
       console.error('Error fetching data:', error);
@@ -130,7 +119,6 @@ export function CandidateReview() {
 
   return (
     <div>
-      {/* Header with Filters */}
       <div className="mb-6">
         <h2 className="text-2xl text-gray-900 mb-4">Candidate Review</h2>
         
@@ -168,7 +156,6 @@ export function CandidateReview() {
         </div>
       </div>
 
-      {/* Applications List */}
       {filteredApps.length === 0 ? (
         <div className="text-center py-12 bg-white rounded-xl border border-gray-200">
           <Filter className="w-16 h-16 text-gray-300 mx-auto mb-4" />
@@ -191,16 +178,12 @@ export function CandidateReview() {
                 </div>
               </div>
 
-              {/* Match Breakdown */}
               <div className="grid grid-cols-3 gap-4 mb-4">
                 <div>
                   <div className="text-sm text-gray-600 mb-1">Skills Match</div>
                   <div className="flex items-center gap-2">
                     <div className="flex-1 h-2 bg-gray-200 rounded-full overflow-hidden">
-                      <div
-                        className="h-full bg-blue-500 rounded-full"
-                        style={{ width: `${(app.skillMatch || 0) * 100}%` }}
-                      />
+                      <div className="h-full bg-blue-500 rounded-full" style={{ width: `${(app.skillMatch || 0) * 100}%` }} />
                     </div>
                     <span className="text-sm text-gray-900">{Math.round((app.skillMatch || 0) * 100)}%</span>
                   </div>
@@ -209,10 +192,7 @@ export function CandidateReview() {
                   <div className="text-sm text-gray-600 mb-1">Text Similarity</div>
                   <div className="flex items-center gap-2">
                     <div className="flex-1 h-2 bg-gray-200 rounded-full overflow-hidden">
-                      <div
-                        className="h-full bg-cyan-500 rounded-full"
-                        style={{ width: `${(app.textSimilarity || 0) * 100}%` }}
-                      />
+                      <div className="h-full bg-cyan-500 rounded-full" style={{ width: `${(app.textSimilarity || 0) * 100}%` }} />
                     </div>
                     <span className="text-sm text-gray-900">{Math.round((app.textSimilarity || 0) * 100)}%</span>
                   </div>
@@ -221,24 +201,18 @@ export function CandidateReview() {
                   <div className="text-sm text-gray-600 mb-1">Experience</div>
                   <div className="flex items-center gap-2">
                     <div className="flex-1 h-2 bg-gray-200 rounded-full overflow-hidden">
-                      <div
-                        className="h-full bg-green-500 rounded-full"
-                        style={{ width: `${(app.experienceScore || 0) * 100}%` }}
-                      />
+                      <div className="h-full bg-green-500 rounded-full" style={{ width: `${(app.experienceScore || 0) * 100}%` }} />
                     </div>
                     <span className="text-sm text-gray-900">{Math.round((app.experienceScore || 0) * 100)}%</span>
                   </div>
                 </div>
               </div>
 
-              {/* Skills */}
               <div className="mb-4">
                 <div className="text-sm text-gray-700 mb-2">Matched Skills ({app.matchedSkills?.length || 0})</div>
                 <div className="flex flex-wrap gap-2">
                   {(app.matchedSkills || []).slice(0, 8).map(skill => (
-                    <span key={skill} className="px-2 py-1 bg-green-50 text-green-700 rounded-lg text-sm">
-                      {skill}
-                    </span>
+                    <span key={skill} className="px-2 py-1 bg-green-50 text-green-700 rounded-lg text-sm">{skill}</span>
                   ))}
                   {(app.matchedSkills?.length || 0) > 8 && (
                     <span className="px-2 py-1 bg-gray-100 text-gray-600 rounded-lg text-sm">
@@ -251,21 +225,17 @@ export function CandidateReview() {
                     <div className="text-sm text-gray-700 mb-2">Missing Skills ({app.missingSkills.length})</div>
                     <div className="flex flex-wrap gap-2">
                       {app.missingSkills.slice(0, 5).map(skill => (
-                        <span key={skill} className="px-2 py-1 bg-red-50 text-red-700 rounded-lg text-sm">
-                          {skill}
-                        </span>
+                        <span key={skill} className="px-2 py-1 bg-red-50 text-red-700 rounded-lg text-sm">{skill}</span>
                       ))}
                     </div>
                   </div>
                 )}
               </div>
 
-              {/* AI Explanation */}
               <div className="p-3 bg-blue-50 border border-blue-200 rounded-lg mb-4">
                 <p className="text-sm text-blue-900">{app.explanation}</p>
               </div>
 
-              {/* Actions */}
               <div className="flex items-center gap-3">
                 <select
                   value={app.status}
@@ -291,7 +261,6 @@ export function CandidateReview() {
         </div>
       )}
 
-      {/* Detail Modal */}
       {selectedApp && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-50" onClick={() => setSelectedApp(null)}>
           <div className="bg-white rounded-2xl shadow-2xl max-w-4xl w-full max-h-[90vh] overflow-y-auto" onClick={e => e.stopPropagation()}>
@@ -308,9 +277,7 @@ export function CandidateReview() {
                 <h4 className="text-sm text-gray-600 mb-2">All Skills</h4>
                 <div className="flex flex-wrap gap-2">
                   {(selectedApp.skills || []).map(skill => (
-                    <span key={skill} className="px-3 py-1 bg-blue-50 text-blue-700 rounded-lg">
-                      {skill}
-                    </span>
+                    <span key={skill} className="px-3 py-1 bg-blue-50 text-blue-700 rounded-lg">{skill}</span>
                   ))}
                 </div>
               </div>
@@ -319,9 +286,7 @@ export function CandidateReview() {
                 <h4 className="text-sm text-gray-600 mb-2">Matched Keywords</h4>
                 <div className="flex flex-wrap gap-2">
                   {(selectedApp.matchedKeywords || []).map(keyword => (
-                    <span key={keyword} className="px-2 py-1 bg-gray-100 text-gray-700 rounded text-sm">
-                      {keyword}
-                    </span>
+                    <span key={keyword} className="px-2 py-1 bg-gray-100 text-gray-700 rounded text-sm">{keyword}</span>
                   ))}
                 </div>
               </div>

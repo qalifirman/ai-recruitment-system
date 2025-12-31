@@ -1,9 +1,9 @@
 import React, { useState, useEffect } from 'react';
 import { useAuth } from '../../contexts/AuthContext';
 import { serverFunctionUrl } from '../../utils/supabase/info';
-import { parseResumeFile, validateResumeFile } from '../../utils/pdf-parser';
-import { parseResume, calculateMatch } from '../../utils/ai/nlp-engine';
-import { Upload, Search, MapPin, Briefcase, Clock, TrendingUp, Filter, X } from 'lucide-react';
+import { calculateMatch } from '../../utils/ai/nlp-engine';
+import { Search, MapPin, Briefcase, Clock, Filter, AlertCircle, Loader2 } from 'lucide-react';
+import { toast } from 'sonner';
 
 interface Job {
   id: string;
@@ -25,9 +25,18 @@ interface JobMatch extends Job {
   experienceScore: number;
   matchedSkills: string[];
   missingSkills: string[];
-  matchedKeywords: string[]; // Added missing interface property
+  matchedKeywords: string[];
   explanation: string;
-  resumePath: string;
+}
+
+interface ActiveResume {
+  id: string;
+  fileUrl: string;
+  parsedData: {
+    skills: string[];
+    yearsOfExperience: number;
+    rawText: string;
+  };
 }
 
 export function JobRecommendations() {
@@ -35,253 +44,177 @@ export function JobRecommendations() {
   const [jobs, setJobs] = useState<Job[]>([]);
   const [jobMatches, setJobMatches] = useState<JobMatch[]>([]);
   const [loading, setLoading] = useState(true);
-  const [resumeUploaded, setResumeUploaded] = useState(false);
-  const [resumeText, setResumeText] = useState('');
-  const [resumeSkills, setResumeSkills] = useState<string[]>([]);
-  const [resumeYears, setResumeYears] = useState(0);
-  const [uploading, setUploading] = useState(false);
+  const [activeResume, setActiveResume] = useState<ActiveResume | null>(null);
+  
+  // Filters
   const [searchTerm, setSearchTerm] = useState('');
   const [locationFilter, setLocationFilter] = useState('');
   const [showFilters, setShowFilters] = useState(false);
+  const [processingApp, setProcessingApp] = useState<string | null>(null);
 
   const serverUrl = serverFunctionUrl;
 
   useEffect(() => {
-    fetchJobs();
-  }, []);
+    if (user && accessToken) {
+      fetchData();
+    }
+  }, [user, accessToken]);
 
-  const fetchJobs = async () => {
+  const fetchData = async () => {
     try {
-      const response = await fetch(`${serverUrl}/jobs`, {
-        headers: {
-          'Authorization': `Bearer ${accessToken}`
-        }
+      setLoading(true);
+
+      // 1. Fetch Resumes
+      const resumeRes = await fetch(`${serverUrl}/resumes`, {
+        headers: { 'Authorization': `Bearer ${accessToken}` }
       });
 
-      if (response.ok) {
-        const data = await response.json();
-        // FIX #1: Sanitize data immediately upon fetch
+      let currentResume: ActiveResume | undefined;
+
+      if (resumeRes.ok) {
+        const data = await resumeRes.json();
+        // Find the active one
+        currentResume = (data.resumes || []).find((r: any) => r.isActive);
+        if (currentResume) {
+          setActiveResume(currentResume);
+        }
+      }
+
+      // 2. Fetch Jobs
+      const jobRes = await fetch(`${serverUrl}/jobs`, {
+        headers: { 'Authorization': `Bearer ${accessToken}` }
+      });
+
+      if (jobRes.ok) {
+        const data = await jobRes.json();
         const cleanJobs = (data.jobs || []).map((j: any) => ({
           ...j,
-          requiredSkills: j.requiredSkills || [] 
+          requiredSkills: j.requiredSkills || j.requirements || [], 
+          requiredYearsExp: j.requiredYearsExp || 0
         }));
         setJobs(cleanJobs);
+
+        // 3. Match immediately if we have both jobs and a resume
+        if (currentResume && cleanJobs.length > 0) {
+          runMatchingAlgorithm(cleanJobs, currentResume);
+        } else {
+          setJobMatches([]); 
+        }
       }
     } catch (error) {
-      console.error('Error fetching jobs:', error);
+      console.error('Error fetching data:', error);
+      toast.error('Failed to load data');
     } finally {
       setLoading(false);
     }
   };
 
-  const handleResumeUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
+  const runMatchingAlgorithm = (jobsToMatch: Job[], resume: ActiveResume) => {
+    const { rawText, skills, yearsOfExperience } = resume.parsedData;
 
-    // Validate file
-    const validation = validateResumeFile(file);
-    if (!validation.valid) {
-      alert(validation.error);
-      return;
-    }
+    const matches = jobsToMatch.map(job => {
+      const matchResult = calculateMatch(
+        rawText,
+        job.description,
+        skills,
+        job.requiredSkills || [],
+        yearsOfExperience || 0,
+        job.requiredYearsExp || 0
+      );
 
-    setUploading(true);
+      return {
+        ...job,
+        ...matchResult
+      };
+    });
 
-    try {
-      // Parse resume text
-      const text = await parseResumeFile(file);
-      
-      // Extract structured data using AI
-      const parsed = parseResume(text);
-      
-      setResumeText(text);
-      setResumeSkills(parsed.skills);
-      setResumeYears(parsed.yearsOfExperience);
-
-      // Upload to server
-      const formData = new FormData();
-      formData.append('file', file);
-
-      const response = await fetch(`${serverUrl}/resumes/upload`, {
-        method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${accessToken}`
-        },
-        body: formData
-      });
-
-      if (response.ok) {
-        const data = await response.json();
-        
-        // Store resume path for future applications
-        const resumePath = data.path;
-        
-        // Calculate matches for all jobs
-        const matches = jobs.map(job => {
-          const matchResult = calculateMatch(
-            text,
-            job.description,
-            parsed.skills,
-            job.requiredSkills || [], // Safety check for calculation
-            parsed.yearsOfExperience,
-            job.requiredYearsExp
-          );
-
-          return {
-            ...job,
-            ...matchResult,
-            resumePath // Store path for applications
-          };
-        }).sort((a, b) => b.matchScore - a.matchScore);
-
-        setJobMatches(matches);
-        setResumeUploaded(true);
-      } else {
-        const error = await response.json();
-        alert(error.error || 'Failed to upload resume');
-      }
-    } catch (error: any) {
-      console.error('Resume upload error:', error);
-      alert(error.message || 'Failed to process resume');
-    } finally {
-      setUploading(false);
-    }
+    setJobMatches(matches.sort((a, b) => b.matchScore - a.matchScore));
   };
 
   const applyToJob = async (job: JobMatch) => {
-    if (!resumeUploaded) {
-      alert('Please upload your resume first');
+    if (!activeResume) {
+      toast.error('Please go to "Resume Manager" and upload a resume first.');
       return;
     }
 
+    setProcessingApp(job.id);
+
     try {
+      const applicationData = {
+        jobId: job.id,
+        resumeUrl: activeResume.fileUrl,
+        yearsOfExperience: activeResume.parsedData.yearsOfExperience,
+        
+        // AI Data
+        matchScore: job.matchScore,
+        skillMatch: job.skillMatch,
+        textSimilarity: job.textSimilarity,
+        experienceScore: job.experienceScore,
+        matchedSkills: job.matchedSkills,
+        missingSkills: job.missingSkills,
+        matchedKeywords: job.matchedKeywords,
+        explanation: job.explanation,
+        
+        // Applicant Info
+        applicantName: user?.name,
+        applicantEmail: user?.email
+      };
+
       const response = await fetch(`${serverUrl}/applications`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
           'Authorization': `Bearer ${accessToken}`
         },
-        body: JSON.stringify({
-          jobId: job.id,
-          resumeText,
-          skills: resumeSkills,
-          yearsOfExperience: resumeYears,
-          matchScore: job.matchScore,
-          skillMatch: job.skillMatch,
-          textSimilarity: job.textSimilarity,
-          experienceScore: job.experienceScore,
-          matchedSkills: job.matchedSkills,
-          missingSkills: job.missingSkills,
-          matchedKeywords: job.matchedKeywords,
-          explanation: job.explanation,
-          applicantName: user?.name,
-          applicantEmail: user?.email,
-          resumeUrl: job.resumePath // Ensure resume path is sent
-        })
+        body: JSON.stringify(applicationData)
       });
 
       if (response.ok) {
-        alert('Application submitted successfully!');
+        toast.success(`Application submitted for ${job.title}!`);
       } else {
         const error = await response.json();
-        alert(error.error || 'Failed to submit application');
+        toast.error(error.error || 'Failed to submit application');
       }
     } catch (error) {
       console.error('Application error:', error);
-      alert('Failed to submit application');
+      toast.error('Failed to submit application');
+    } finally {
+      setProcessingApp(null);
     }
   };
 
   const getFilteredJobs = () => {
-    let filtered = resumeUploaded ? jobMatches : jobs;
+    let displayList: any[] = activeResume ? jobMatches : jobs;
 
     if (searchTerm) {
-      filtered = filtered.filter(job =>
+      displayList = displayList.filter(job =>
         job.title.toLowerCase().includes(searchTerm.toLowerCase()) ||
         job.description.toLowerCase().includes(searchTerm.toLowerCase()) ||
-        // FIX #2: Safety check for search filter
-        (job.requiredSkills || []).some(skill => skill.toLowerCase().includes(searchTerm.toLowerCase()))
+        (job.requiredSkills || []).some((s: string) => s.toLowerCase().includes(searchTerm.toLowerCase()))
       );
     }
 
     if (locationFilter) {
-      filtered = filtered.filter(job =>
+      displayList = displayList.filter(job =>
         job.location.toLowerCase().includes(locationFilter.toLowerCase())
       );
     }
 
-    return filtered;
+    return displayList;
   };
 
   const filteredJobs = getFilteredJobs();
 
   if (loading) {
-    return <div className="text-center py-12 text-gray-500">Loading jobs...</div>;
+    return (
+      <div className="flex justify-center items-center py-20">
+        <Loader2 className="w-8 h-8 animate-spin text-blue-600" />
+      </div>
+    );
   }
 
   return (
     <div>
-      {/* Resume Upload Section */}
-      {!resumeUploaded ? (
-        <div className="bg-gradient-to-br from-blue-500 to-cyan-500 rounded-2xl p-8 mb-8 text-white">
-          <div className="max-w-2xl mx-auto text-center">
-            <Upload className="w-16 h-16 mx-auto mb-4 opacity-90" />
-            <h2 className="text-3xl mb-3">Upload Your Resume</h2>
-            <p className="text-blue-100 mb-6">
-              Get AI-powered job recommendations based on your skills and experience
-            </p>
-            <label className="inline-block cursor-pointer">
-              <input
-                type="file"
-                accept=".pdf,.docx,.txt"
-                onChange={handleResumeUpload}
-                className="hidden"
-                disabled={uploading}
-              />
-              <div className="px-8 py-4 bg-white text-blue-600 rounded-xl hover:bg-blue-50 transition-all shadow-lg inline-block">
-                {uploading ? 'Processing...' : 'Upload Resume (PDF, DOCX, or TXT)'}
-              </div>
-            </label>
-            <p className="text-sm text-blue-100 mt-4">Maximum file size: 10MB</p>
-          </div>
-        </div>
-      ) : (
-        <div className="bg-green-50 border border-green-200 rounded-xl p-6 mb-6">
-          <div className="flex items-start justify-between">
-            <div>
-              <h3 className="text-lg text-green-900 mb-2">Resume Uploaded Successfully!</h3>
-              <p className="text-green-700 mb-2">
-                Extracted {resumeSkills.length} skills • {resumeYears} years of experience
-              </p>
-              <div className="flex flex-wrap gap-2">
-                {resumeSkills.slice(0, 10).map(skill => (
-                  <span key={skill} className="px-2 py-1 bg-green-100 text-green-700 rounded text-sm">
-                    {skill}
-                  </span>
-                ))}
-                {resumeSkills.length > 10 && (
-                  <span className="px-2 py-1 bg-green-100 text-green-700 rounded text-sm">
-                    +{resumeSkills.length - 10} more
-                  </span>
-                )}
-              </div>
-            </div>
-            <label className="cursor-pointer">
-              <input
-                type="file"
-                accept=".pdf,.docx,.txt"
-                onChange={handleResumeUpload}
-                className="hidden"
-                disabled={uploading}
-              />
-              <div className="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors">
-                Update Resume
-              </div>
-            </label>
-          </div>
-        </div>
-      )}
-
       {/* Search and Filters */}
       <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-4 mb-6">
         <div className="flex flex-wrap gap-4">
@@ -330,11 +263,23 @@ export function JobRecommendations() {
         </div>
       </div>
 
-      {/* Job Listings */}
+      {!activeResume && (
+        <div className="mb-6 p-4 bg-yellow-50 border border-yellow-200 rounded-xl flex items-center gap-3">
+          <AlertCircle className="w-6 h-6 text-yellow-600" />
+          <div>
+            <h4 className="font-medium text-yellow-900">No Active Resume Found</h4>
+            <p className="text-sm text-yellow-700">
+              Please go to the <strong>Resume Manager</strong> tab to upload and activate a resume. 
+              Jobs below are not personalized to your skills.
+            </p>
+          </div>
+        </div>
+      )}
+
       <div>
         <div className="flex items-center justify-between mb-4">
           <h2 className="text-2xl text-gray-900">
-            {resumeUploaded ? 'Recommended Jobs' : 'All Jobs'} ({filteredJobs.length})
+            {activeResume ? 'Recommended Jobs' : 'All Jobs'} ({filteredJobs.length})
           </h2>
         </div>
 
@@ -366,10 +311,10 @@ export function JobRecommendations() {
                       {job.salary && <span>💰 {job.salary}</span>}
                     </div>
                     <p className="text-gray-700 mb-4 line-clamp-2">{job.description}</p>
+                    
                     <div className="flex flex-wrap gap-2">
-                      {/* FIX #3: Handle null skills in display logic */}
-                      {(job.requiredSkills || []).slice(0, 6).map(skill => {
-                        const isMatched = resumeUploaded && (job as JobMatch).matchedSkills?.includes(skill);
+                      {(job.requiredSkills || []).slice(0, 6).map((skill: string) => {
+                        const isMatched = activeResume && (job as JobMatch).matchedSkills?.includes(skill);
                         return (
                           <span
                             key={skill}
@@ -391,7 +336,7 @@ export function JobRecommendations() {
                     </div>
                   </div>
 
-                  {resumeUploaded && (job as JobMatch).matchScore !== undefined && (
+                  {activeResume && (job as JobMatch).matchScore !== undefined && (
                     <div className="ml-6 text-center">
                       <div className="w-24 h-24 rounded-full bg-gradient-to-br from-blue-500 to-cyan-500 flex items-center justify-center mb-2">
                         <div>
@@ -405,9 +350,8 @@ export function JobRecommendations() {
                   )}
                 </div>
 
-                {resumeUploaded && (job as JobMatch).matchScore !== undefined && (
+                {activeResume && (job as JobMatch).matchScore !== undefined && (
                   <>
-                    {/* Match Details */}
                     <div className="grid grid-cols-3 gap-4 mb-4 pt-4 border-t border-gray-200">
                       <div>
                         <div className="text-sm text-gray-600 mb-1">Skills</div>
@@ -447,24 +391,28 @@ export function JobRecommendations() {
                       </div>
                     </div>
 
-                    {/* AI Explanation */}
                     <div className="p-3 bg-blue-50 border border-blue-200 rounded-lg mb-4">
                       <p className="text-sm text-blue-900">{(job as JobMatch).explanation}</p>
                     </div>
                   </>
                 )}
 
-                {/* Apply Button */}
                 <button
                   onClick={() => applyToJob(job as JobMatch)}
-                  disabled={!resumeUploaded}
-                  className={`w-full py-3 rounded-xl transition-all ${
-                    resumeUploaded
+                  disabled={!activeResume || processingApp === job.id}
+                  className={`w-full py-3 rounded-xl transition-all flex justify-center items-center gap-2 ${
+                    activeResume
                       ? 'bg-gradient-to-r from-blue-600 to-cyan-600 text-white hover:from-blue-700 hover:to-cyan-700 shadow-lg hover:shadow-xl'
                       : 'bg-gray-200 text-gray-500 cursor-not-allowed'
                   }`}
                 >
-                  {resumeUploaded ? 'Apply Now' : 'Upload resume to apply'}
+                  {processingApp === job.id ? (
+                     <Loader2 className="w-5 h-5 animate-spin" />
+                  ) : activeResume ? (
+                    'Apply Now'
+                  ) : (
+                    'Upload resume in Manager to apply'
+                  )}
                 </button>
               </div>
             ))}
