@@ -101,17 +101,19 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   };
 
   const signup = async (email: string, password: string, name: string, role: 'hr' | 'applicant') => {
-    try {
-      console.log('Starting signup process...', { email, name, role });
-      
-      const response = await fetch(`${serverUrl}/signup`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${serviceRoleKey}`
-        },
-        body: JSON.stringify({ email, password, name, role })
-      });
+  try {
+    console.log('Starting signup process...', { email, name, role });
+    
+    const response = await fetch(`${serverUrl}/signup`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        // CHANGE THIS LINE: Use publicAnonKey instead of serviceRoleKey
+        'apikey': publicAnonKey,
+        'Authorization': `Bearer ${publicAnonKey}` 
+      },
+      body: JSON.stringify({ email, password, name, role })
+    });
 
       console.log('Signup response status:', response.status);
 

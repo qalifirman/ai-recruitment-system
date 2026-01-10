@@ -3,7 +3,7 @@ import { cors } from 'npm:hono/cors';
 import { logger } from 'npm:hono/logger';
 import { createClient } from 'npm:@supabase/supabase-js@2';
 
-const app = new Hono().basePath('/make-server-76bea622');
+const app = new Hono().basePath('/functions/v1/make-server-76bea622');
 
 // Middleware
 app.use('*', cors());
